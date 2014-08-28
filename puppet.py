@@ -52,7 +52,7 @@ w = 0.729844 # Inertia weight to prevent velocities becoming too large
 c1 = 1.496180 # Scaling co-efficient on the social component
 c2 = 1.496180 # Scaling co-efficient on the cognitive component
 dimension = 2 # Size of the problem
-particle_swarm_size = 20
+particle_swarm_size = 16
 particle_positions = np.random.rand(particle_swarm_size,dimension)
 for index in range(particle_swarm_size):
     for i in range(dimension):
