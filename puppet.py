@@ -35,7 +35,8 @@ pub5 = rospy.Publisher(ronex_path+"command/pwm/5", PWM)
 
 pwms = [pub0,pub1,pub2,pub3,pub4,pub5]
 
-online=True
+online=False
+
 if online:
     stdscr = curses.initscr()
 
@@ -46,20 +47,30 @@ analogue_input_queue = deque([],4)
 
 pub_output = rospy.Publisher('puppet', Float32)
 
-w = 0.729844 # Inertia weight to prevent velocities becoming too large
-c1 = 1.496180 # Scaling co-efficient on the social component
-c2 = 1.496180 # Scaling co-efficient on the cognitive component
-dimensions = 2 # Size of the problem
+w = 0.25 # Inertia weight to prevent velocities becoming too large
+c1 = 0.5 # Scaling co-efficient on the social component
+c2 = 0.5 # Scaling co-efficient on the cognitive component
+dimension = 2 # Size of the problem
 
-particle_population_size = 512
-particle_positions = np.random.rand(particle_population_size,dimensions)
-particle_values = np.zeros(particle_population_size)
-particle_velocities = np.random.rand(particle_population_size,dimensions)/1000
-particle_best_positions=particle_positions
-particle_best_values=np.zeros(particle_population_size)
+particle_swarm_size = 12
+particle_positions = np.random.rand(particle_swarm_size,dimension)
+particle_values = [np.nan]*particle_swarm_size
+particle_velocities = np.zeros_like(particle_positions)
+particle_maxima_positions=np.zeros_like(particle_positions)
+particle_maxima_positions[:]=np.nan
+particle_minima_positions=np.zeros_like(particle_positions)
+particle_minima_positions[:]=np.nan
+particle_maxima_values=[-np.inf]*particle_swarm_size
+particle_minima_values=[np.inf]*particle_swarm_size
+particle_global_maxima_position=[np.nan]*dimension
+particle_global_minima_position=[np.nan]*dimension
+particle_global_maxima_value=-np.inf
+particle_global_minima_value=np.inf
+
+print particle_global_maxima_position
 
 def func(x,y) :
-    return (1+(sin(x*math.pi*4)*sin(y*math.pi*4)))/2
+    return (1+(cos(x*math.pi*2)*sin(y*math.pi*2)))/2
 
 def subscriber_cb(msg) : #called whenever RoNeX updates (ie: every frame)
     global active, supressed
@@ -82,11 +93,11 @@ def subscriber_cb(msg) : #called whenever RoNeX updates (ie: every frame)
     if len(analogue_input_queue)>3:
         a1 = []
         a2 = []
-        for n in range(0, 12):
+        for n in range(12):
             a1.append((analogue_input_queue[0][n]+analogue_input_queue[1][n])/2)
             a2.append((analogue_input_queue[2][n]+analogue_input_queue[3][n])/2)
         d = 0.0
-        for n in range(0, 12):
+        for n in range(12):
             d=d+(a1[n]-a2[n])**2
         d = sqrt(d)
         pub_output.publish(d)
@@ -95,19 +106,57 @@ def subscriber_cb(msg) : #called whenever RoNeX updates (ie: every frame)
         output_positions = map(make_waves, range(1, 13)) #get an array of desired servo positions
         
         if not online:
-            global particle_velocities, particle_positions
-            for index in range(0, particle_population_size) :
-                particle_velocities[index]=particle_velocities[index]+(np.random.normal()/1000,np.random.normal()/1000)
+            global particle_velocities, particle_positions, particle_swarm_size, particle_global_maxima_position, particle_global_maxima_value, particle_global_minima_position, particle_global_minima_value
             
-               
-            for index in range(0, particle_population_size):
+            for index in range(particle_swarm_size):
+                for i in range(dimension):
+                    r1 = np.random.uniform()
+                    r2 = np.random.uniform()
+                    social=0.0
+                    cognitive=0.0
+                    if index%2==0:
+                        if not np.isnan(particle_global_maxima_position[i]) :
+                            social = c1 * r1 * (particle_global_maxima_position[i] - particle_positions[index,i])
+                        if not np.isnan(particle_maxima_positions[index,i]) :
+                            cognitive = c2 * r2 * (particle_maxima_positions[index,i] - particle_positions[index,i])  
+                    else:
+                        if not np.isnan(particle_global_minima_position[i]) :
+                            social = c1 * r1 * (particle_global_minima_position[i] - particle_positions[index,i])
+                        if not np.isnan(particle_minima_positions[index,i]) :
+                            cognitive = c2 * r2 * (particle_minima_positions[index,i] - particle_positions[index,i]) 
+                             
+                    particle_velocities[index,i] = (w * particle_velocities[index,i]) + social + cognitive            
+            
+            for index in range(particle_swarm_size):
+                
                 particle_values[index]=func(particle_positions[index,0],particle_positions[index,1])
-
-            
-            
+                
+                if particle_values[index] > particle_global_maxima_value:
+                    particle_global_maxima_value=particle_values[index]
+                    for i in range(dimension): 
+                        particle_global_maxima_position[i]=particle_positions[index,i]
+                if particle_values[index] > particle_maxima_values[index]:
+                    particle_maxima_values[index]=particle_values[index]
+                    for i in range(dimension):                    
+                        particle_maxima_positions[index,i]=particle_positions[index,i]
+                
+                if particle_values[index] < particle_global_minima_value:
+                    particle_global_minima_value=particle_values[index]
+                    for i in range(dimension): 
+                        particle_global_minima_position[i]=particle_positions[index,i]
+                if particle_values[index] < particle_minima_values[index]:
+                    particle_minima_values[index]=particle_values[index]
+                    for i in range(dimension):                    
+                        particle_minima_positions[index,i]=particle_positions[index,i]
+                
+                
             particle_positions=np.add(particle_positions,particle_velocities)    
+            
             plt.clf()
-            plt.scatter(particle_positions[:,0],particle_positions[:,1],particle_values*100)
+            plt.scatter(particle_positions[::2,0],particle_positions[::2,1],c='red',marker='+')
+            plt.scatter(particle_positions[1::2,0],particle_positions[1::2,1],c='blue',marker="x")
+            plt.xlim(-math.pi, math.pi)
+            plt.ylim(-math.pi, math.pi)
             plt.draw()
     #INSERT INTERESTING BIT HERE    
     
@@ -121,7 +170,7 @@ def subscriber_cb(msg) : #called whenever RoNeX updates (ie: every frame)
 
 def get_servo_positions(msg) : #get analogue value from an individual servo
     analogue_inputs = []
-    for index in range(0, 12): #fill an array with the analogue servo inputs
+    for index in range(12): #fill an array with the analogue servo inputs
         analogue_inputs.append(msg.analogue[index]) # range 0 -- 3690
     return analogue_inputs 
 
