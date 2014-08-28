@@ -6,7 +6,9 @@ import pickle
 import dynamic_reconfigure.client
 from sr_ronex_msgs.msg import PWM, GeneralIOState
 from std_msgs.msg import Bool
+from std_msgs.msg import Float32
 from math import *
+from collections import deque
 
 ronex_id = "1403017360"
 ronex_path = "/ronex/general_io/" + ronex_id + "/"
@@ -27,6 +29,10 @@ stdscr = curses.initscr()
 active = False 
 supressed=True
 
+analogue_input_queue = deque([],4)
+
+pub_output = rospy.Publisher('puppet', Float32)
+
 def subscriber_cb(msg) : #called whenever RoNeX updates (ie: every frame)
     global active
     global supressed
@@ -43,6 +49,21 @@ def subscriber_cb(msg) : #called whenever RoNeX updates (ie: every frame)
     
     analogue_inputs = get_servo_positions(msg)
     
+    analogue_input_queue.append(analogue_inputs)
+    
+    if len(analogue_input_queue)>3:
+        a1 = []
+        a2 = []
+        for n in range(0, 12):
+            a1.append((analogue_input_queue[0][n]+analogue_input_queue[1][n])/2)
+            a2.append((analogue_input_queue[2][n]+analogue_input_queue[3][n])/2)
+        d = 0.0
+        for n in range(0, 12):
+            d=d+(a1[n]-a2[n])**2
+        d = sqrt(d)
+        pub_output.publish(d)
+    #rospy.loginfo("analogue_input_queue.length = %d", len(analogue_input_queue))
+    
     #INSERT INTERESTING BIT HERE
     
     output_positions = map(make_waves, range(1, 13)) #get an array of desired servo positions
@@ -51,11 +72,11 @@ def subscriber_cb(msg) : #called whenever RoNeX updates (ie: every frame)
         
     if active:
         set_servo_angles(output_positions)
-    else:
-        startTime=rospy.get_rostime()
+    #else:
+    #    startTime=rospy.get_rostime()
 
 
-def get_servo_positions(msg) : #get analogue value from and individual servo
+def get_servo_positions(msg) : #get analogue value from an individual servo
     analogue_inputs = []
     for index in range(0, 12): #fill an array with the analogue servo inputs
         analogue_inputs.append(msg.analogue[index]) # range 0 -- 3690
@@ -97,12 +118,12 @@ def set_servo_angles(angles_zero_to_one) : #set all the servo from a list of pos
 
   
 def shutdown(): #put the console back to normal and turn the servos off
+    configure_servos(False)
     curses.nocbreak()
     stdscr.keypad(0)
     curses.echo()
     curses.endwin()
-    configure_servos(False)
-
+    
 
 def configure_servos(on): #turn all servos on or off
     client = dynamic_reconfigure.client.Client(ronex_path)
