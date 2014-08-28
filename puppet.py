@@ -19,31 +19,37 @@ pub5 = rospy.Publisher("/ronex/general_io/"+ronex_id+"/command/pwm/5", PWM)
 
 pwms = [pub0,pub1,pub2,pub3,pub4,pub5]
 
+
 def make_waves(index) :
   now = rospy.get_rostime()
   time = now.to_sec()
-  return (cos(((time*(1+index/20.0))+(index*3))/2)/12.0)+1
+  minus_one_to_one = cos (time*(1+index/12.0))
+  minus_one_to_one/=8.0
+  zero_to_one = (minus_one_to_one+1.0)/2.0
+  return  zero_to_one
 
 def subscriber_cb(msg) :
   analog_in = float(msg.analogue[0]) # range 0 -- 3690
-  print analog_in  
-  analog_in /= 3690	             # range 0 - 1
+  
   
   waves = map(make_waves, range(1, 13))
 
-  period = 65000                    # in clock ticks
+  period = 64000                    # in clock ticks
 
   clock_speed = 64e6/20            #64MHz clock, clock divider of 20
 
   clock_tick = (1/clock_speed) * 1000 # in mseconds
 
+  print clock_tick 
+
   pwm_message = PWM()
   pwm_message.pwm_period = period
-
   for index, pwm in enumerate(pwms) :
-    pwm_message.pwm_on_time_0 = ( waves[index*2] + .5 ) / clock_tick
-    pwm_message.pwm_on_time_1 = ( waves[(index*2)+1] + .5 ) / clock_tick
+    pwm_message.pwm_on_time_0 =  1600+ waves[index*2]  * 4800
+    pwm_message.pwm_on_time_1 =  1600 + waves[(index*2)] * 4800
+    print pwm_message.pwm_on_time_0
     pwm.publish(pwm_message)
+  
 
 
 class ChangeRonexConfiguration(object):
