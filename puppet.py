@@ -10,6 +10,13 @@ from std_msgs.msg import Float32
 from math import *
 from collections import deque
 
+import numpy as np
+import matplotlib.pyplot as plt
+import matplotlib.animation as animation
+from matplotlib.pyplot import plot, ion, show
+from numpy.random import uniform, seed
+from matplotlib.mlab import griddata
+
 ronex_id = "1403017360"
 ronex_path = "/ronex/general_io/" + ronex_id + "/"
 
@@ -33,6 +40,10 @@ analogue_input_queue = deque([],4)
 
 pub_output = rospy.Publisher('puppet', Float32)
 
+particle_population_size = 24
+test_xs = np.random.rand(particle_population_size)
+test_ys = np.random.rand(particle_population_size)
+
 def subscriber_cb(msg) : #called whenever RoNeX updates (ie: every frame)
     global active
     global supressed
@@ -48,7 +59,7 @@ def subscriber_cb(msg) : #called whenever RoNeX updates (ie: every frame)
     #------------------------
     
     analogue_inputs = get_servo_positions(msg)
-    
+
     analogue_input_queue.append(analogue_inputs)
     
     if len(analogue_input_queue)>3:
@@ -62,11 +73,21 @@ def subscriber_cb(msg) : #called whenever RoNeX updates (ie: every frame)
             d=d+(a1[n]-a2[n])**2
         d = sqrt(d)
         pub_output.publish(d)
-    #rospy.loginfo("analogue_input_queue.length = %d", len(analogue_input_queue))
+        #rospy.loginfo("analogue_input_queue.length = %d", len(analogue_input_queue))
     
-    #INSERT INTERESTING BIT HERE
     
-    output_positions = map(make_waves, range(1, 13)) #get an array of desired servo positions
+    
+        output_positions = map(make_waves, range(1, 13)) #get an array of desired servo positions
+    
+        for index in range(0, particle_population_size) :
+            test_xs[index]=test_xs[index]+(np.random.normal()/100)
+            test_ys[index]=test_ys[index]+(np.random.normal()/100)
+        
+        plt.clf()
+        plt.scatter(x=test_xs, y=test_ys)
+    
+        plt.draw()
+    #INSERT INTERESTING BIT HERE    
     
     #------------------------
         
@@ -123,6 +144,7 @@ def shutdown(): #put the console back to normal and turn the servos off
     stdscr.keypad(0)
     curses.echo()
     curses.endwin()
+    plt.close('all')
     
 
 def configure_servos(on): #turn all servos on or off
@@ -130,16 +152,23 @@ def configure_servos(on): #turn all servos on or off
     params = { 'input_mode_0' : not on, 'input_mode_1' : not on, 'input_mode_2' : not on,'input_mode_3' : not on,'input_mode_4' : not on,'input_mode_5' : not on,'input_mode_6' : not on,'input_mode_7' : not on,'input_mode_8' : not on,'input_mode_9' : not on,'input_mode_10' : not on,'input_mode_11' : not on,}
     config = client.update_configuration(params)
 
-
+def setup_visualisation():
+    plt.ion()
+    plt.show()
+    
 if __name__ == "__main__": #setup
-    stdscr.clear()
-    stdscr.nodelay(1)
-    stdscr.addstr("Hello RoNeX\n")
-    curses.noecho() #make the terminal accept individual key-presses and not echo them to the screen
+    setup_visualisation()
     
     rospy.init_node("change_ronex_configuration_py")
     rospy.on_shutdown(shutdown)
     configure_servos(active)
     startTime=rospy.get_rostime();
     rospy.Subscriber(ronex_path+"state", GeneralIOState, subscriber_cb)
+
+    stdscr.clear()
+    stdscr.nodelay(1)
+    stdscr.addstr("Hello RoNeX\n")
+    curses.noecho() #make the terminal accept individual key-presses and not echo them to the screen
+        
+    
     rospy.spin()
