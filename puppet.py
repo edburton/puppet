@@ -35,7 +35,7 @@ pub5 = rospy.Publisher(ronex_path+"command/pwm/5", PWM)
 
 pwms = [pub0,pub1,pub2,pub3,pub4,pub5]
 
-online=False
+online=False #Set to false to run Particle Swarm Optimization demo without robot
 
 if online:
     stdscr = curses.initscr()
@@ -43,17 +43,21 @@ if online:
 active = False 
 supressed=True
 
-analogue_input_queue = deque([],4)
+analogue_input_queue = deque([],4) 
 
 pub_output = rospy.Publisher('puppet', Float32)
 
-w = 0.25 # Inertia weight to prevent velocities becoming too large
-c1 = 0.5 # Scaling co-efficient on the social component
-c2 = 0.5 # Scaling co-efficient on the cognitive component
-dimension = 2 # Size of the problem
 
-particle_swarm_size = 12
+#Particle Swarm Optomization variables
+w = 0.5 # Inertia weight to prevent velocities becoming too large
+c1 = 1.496180 # Scaling co-efficient on the social component
+c2 = 1.496180 # Scaling co-efficient on the cognitive component
+dimension = 2 # Size of the problem
+particle_swarm_size = 24
 particle_positions = np.random.rand(particle_swarm_size,dimension)
+for index in range(particle_swarm_size):
+    for i in range(dimension):
+        particle_positions[index,i]=np.random.uniform(-1,1)
 particle_values = [np.nan]*particle_swarm_size
 particle_velocities = np.zeros_like(particle_positions)
 particle_maxima_positions=np.zeros_like(particle_positions)
@@ -67,10 +71,15 @@ particle_global_minima_position=[np.nan]*dimension
 particle_global_maxima_value=-np.inf
 particle_global_minima_value=np.inf
 
-print particle_global_maxima_position
+def func(x,y) : #Trivial function for testing Particle Swarm Omptomization
+    return (sin(x*2)*sin(y*2))
 
-def func(x,y) :
-    return (1+(cos(x*math.pi*2)*sin(y*math.pi*2)))/2
+#precompute a mesh of points for visualising trivial PSO function
+xvec = np.linspace(-4.,4.,100)                               
+x_map,y_map = np.meshgrid(xvec, xvec)
+z_map = func(x_map,y_map)
+
+frame_counter=0
 
 def subscriber_cb(msg) : #called whenever RoNeX updates (ie: every frame)
     global active, supressed
@@ -105,16 +114,16 @@ def subscriber_cb(msg) : #called whenever RoNeX updates (ie: every frame)
         
         output_positions = map(make_waves, range(1, 13)) #get an array of desired servo positions
         
-        if not online:
+        if not online: #PSO test starts here
             global particle_velocities, particle_positions, particle_swarm_size, particle_global_maxima_position, particle_global_maxima_value, particle_global_minima_position, particle_global_minima_value
             
-            for index in range(particle_swarm_size):
+            for index in range(particle_swarm_size): #update velocities
                 for i in range(dimension):
                     r1 = np.random.uniform()
                     r2 = np.random.uniform()
                     social=0.0
                     cognitive=0.0
-                    if index%2==0:
+                    if index%2==0: #Even indeces seek maxima, odd indeces seek minima
                         if not np.isnan(particle_global_maxima_position[i]) :
                             social = c1 * r1 * (particle_global_maxima_position[i] - particle_positions[index,i])
                         if not np.isnan(particle_maxima_positions[index,i]) :
@@ -125,9 +134,9 @@ def subscriber_cb(msg) : #called whenever RoNeX updates (ie: every frame)
                         if not np.isnan(particle_minima_positions[index,i]) :
                             cognitive = c2 * r2 * (particle_minima_positions[index,i] - particle_positions[index,i]) 
                              
-                    particle_velocities[index,i] = (w * particle_velocities[index,i]) + social + cognitive            
+                    particle_velocities[index,i] = (w * particle_velocities[index,i]) + social + cognitive          
             
-            for index in range(particle_swarm_size):
+            for index in range(particle_swarm_size): #update cognitive and social maxima and minima
                 
                 particle_values[index]=func(particle_positions[index,0],particle_positions[index,1])
                 
@@ -150,14 +159,27 @@ def subscriber_cb(msg) : #called whenever RoNeX updates (ie: every frame)
                         particle_minima_positions[index,i]=particle_positions[index,i]
                 
                 
-            particle_positions=np.add(particle_positions,particle_velocities)    
+            particle_positions=np.add(particle_positions,particle_velocities)   #add velocities to positions
             
             plt.clf()
-            plt.scatter(particle_positions[::2,0],particle_positions[::2,1],c='red',marker='+')
-            plt.scatter(particle_positions[1::2,0],particle_positions[1::2,1],c='blue',marker="x")
-            plt.xlim(-math.pi, math.pi)
-            plt.ylim(-math.pi, math.pi)
+            #plt.subplot(211) 
+            plt.contour(x_map, y_map, z_map, alpha=0.5)
+            
+            #Even indeces = [::2,0] = seek maxima, odd indeces = [1::2,0] = seek minima  
+            plt.scatter(particle_positions[::2,0],particle_positions[::2,1],c='red',marker='+', alpha=0.5, label='maxima seeking particles')
+            plt.scatter(particle_positions[1::2,0],particle_positions[1::2,1],c='blue',marker='x', alpha=0.5, label='minima seeking particles')
+            
+            plt.xlim(-4, 4)
+            plt.ylim(-4, 4)
+            #plt.axis('off')
+            plt.legend(loc='upper right')
+            #plt.subplot(212) 
+            #plt.plot(particle_values)  
             plt.draw()
+            #global frame_counter
+            #plt.savefig("puppetfig"+str(frame_counter).zfill(3))
+            #frame_counter=frame_counter+1
+    
     #INSERT INTERESTING BIT HERE    
     
     #------------------------
