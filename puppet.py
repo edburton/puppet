@@ -24,11 +24,14 @@ pwms = [pub0,pub1,pub2,pub3,pub4,pub5]
 stdscr = curses.initscr()
 
 active = True;
+supressed=False;
 
 def centre_servo(index) :
   return 0.5
 
 def make_waves(index) :
+  if supressed :
+    return 0.5
   now = rospy.get_rostime()
   time = now.to_sec()-startTime.to_sec()
   minus_one_to_one = sin (time*(1+index/11.0))
@@ -38,11 +41,14 @@ def make_waves(index) :
 
 def subscriber_cb(msg) :
   global active
+  global supressed
 
   c = stdscr.getch()
   if c == ord(' ') :
     active = not active
     configure_servos(active)
+  elif c == ord('z') :
+    supressed = not supressed
 
   if active:
     waves = map(make_waves, range(1, 13))
