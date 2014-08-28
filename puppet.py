@@ -15,9 +15,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
 from matplotlib.pyplot import plot, ion, show
+from matplotlib.mlab import *
 from numpy.random import uniform, seed
-from matplotlib.mlab import griddata
-from mpl_toolkits.mplot3d import Axes3D
 
 from pylab import *
 
@@ -49,11 +48,11 @@ pub_output = rospy.Publisher('puppet', Float32)
 
 
 #Particle Swarm Optomization variables
-w = 0.5 # Inertia weight to prevent velocities becoming too large
+w = 0.729844 # Inertia weight to prevent velocities becoming too large
 c1 = 1.496180 # Scaling co-efficient on the social component
 c2 = 1.496180 # Scaling co-efficient on the cognitive component
 dimension = 2 # Size of the problem
-particle_swarm_size = 24
+particle_swarm_size = 20
 particle_positions = np.random.rand(particle_swarm_size,dimension)
 for index in range(particle_swarm_size):
     for i in range(dimension):
@@ -71,13 +70,17 @@ particle_global_minima_position=[np.nan]*dimension
 particle_global_maxima_value=-np.inf
 particle_global_minima_value=np.inf
 
-def func(x,y) : #Trivial function for testing Particle Swarm Omptomization
-    return (sin(x*2)*sin(y*2))
+def func(p) : #Trivial function for testing Particle Swarm Omptomization
+    z=0.0
+    for n in p:
+        for i in range(1,12) :
+            z=z+(sin(n*(6.0/i))*(1.0/i))
+    return z
 
 #precompute a mesh of points for visualising trivial PSO function
-xvec = np.linspace(-4.,4.,100)                               
+xvec = np.linspace(-2.,2.,100)                               
 x_map,y_map = np.meshgrid(xvec, xvec)
-z_map = func(x_map,y_map)
+z_map = func([x_map,y_map])
 
 frame_counter=0
 
@@ -138,7 +141,7 @@ def subscriber_cb(msg) : #called whenever RoNeX updates (ie: every frame)
             
             for index in range(particle_swarm_size): #update cognitive and social maxima and minima
                 
-                particle_values[index]=func(particle_positions[index,0],particle_positions[index,1])
+                particle_values[index]=func(particle_positions[index,:])
                 
                 if particle_values[index] > particle_global_maxima_value:
                     particle_global_maxima_value=particle_values[index]
@@ -169,10 +172,10 @@ def subscriber_cb(msg) : #called whenever RoNeX updates (ie: every frame)
             plt.scatter(particle_positions[::2,0],particle_positions[::2,1],c='red',marker='+', alpha=0.5, label='maxima seeking particles')
             plt.scatter(particle_positions[1::2,0],particle_positions[1::2,1],c='blue',marker='x', alpha=0.5, label='minima seeking particles')
             
-            plt.xlim(-4, 4)
-            plt.ylim(-4, 4)
+            plt.xlim(-2, 2)
+            plt.ylim(-2, 2)
             #plt.axis('off')
-            plt.legend(loc='upper right')
+            plt.legend(loc='best')
             #plt.subplot(212) 
             #plt.plot(particle_values)  
             plt.draw()
