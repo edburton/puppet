@@ -23,7 +23,7 @@ pwms = [pub0,pub1,pub2,pub3,pub4,pub5]
 def make_waves(index) :
   now = rospy.get_rostime()
   time = now.to_sec()
-  minus_one_to_one = cos (time*(1+index/12.0))
+  minus_one_to_one = cos (time*(1+index/11.0))
   minus_one_to_one/=8.0
   zero_to_one = (minus_one_to_one+1.0)/2.0
   return  zero_to_one
@@ -40,14 +40,11 @@ def subscriber_cb(msg) :
 
   clock_tick = (1/clock_speed) * 1000 # in mseconds
 
-  print clock_tick 
-
   pwm_message = PWM()
   pwm_message.pwm_period = period
   for index, pwm in enumerate(pwms) :
     pwm_message.pwm_on_time_0 =  1600+ waves[index*2]  * 4800
     pwm_message.pwm_on_time_1 =  1600 + waves[(index*2)] * 4800
-    print pwm_message.pwm_on_time_0
     pwm.publish(pwm_message)
   
 
