@@ -17,6 +17,7 @@ import matplotlib.animation as animation
 from matplotlib.pyplot import plot, ion, show
 from matplotlib.mlab import *
 from numpy.random import uniform, seed
+from matplotlib.mlab import PCA as mlabPCA
 
 from pylab import *
 
@@ -51,7 +52,7 @@ pub_output = rospy.Publisher('puppet', Float32)
 w = 0.729844 # Inertia weight to prevent velocities becoming too large
 c1 = 1.496180 # Scaling co-efficient on the social component
 c2 = 1.496180 # Scaling co-efficient on the cognitive component
-dimension = 2 # Size of the problem
+dimension = 12 # Size of the problem
 particle_swarm_size = 16
 particle_positions = np.random.rand(particle_swarm_size,dimension)
 for index in range(particle_swarm_size):
@@ -74,13 +75,8 @@ def func(p) : #Trivial function for testing Particle Swarm Omptomization
     z=0.0
     for n in p:
         for i in range(1,12) :
-            z=z+(sin(n*(6.0/i))*(1.0/i))
+            z=z+(sin(n*(6.0/i))+(1.0/i))
     return z
-
-#precompute a mesh of points for visualising trivial PSO function
-xvec = np.linspace(-2.,2.,100)                               
-x_map,y_map = np.meshgrid(xvec, xvec)
-z_map = func([x_map,y_map])
 
 frame_counter=0
 
@@ -163,21 +159,19 @@ def subscriber_cb(msg) : #called whenever RoNeX updates (ie: every frame)
                 
                 
             particle_positions=np.add(particle_positions,particle_velocities)   #add velocities to positions
+                        
+            mlab_pca = mlabPCA(particle_positions) 
             
             plt.clf()
-            #plt.subplot(211) 
-            plt.contour(x_map, y_map, z_map, alpha=0.5)
+            fig=plt.gcf()
+            fig.add_subplot(111)
             
-            #Even indeces = [::2,0] = seek maxima, odd indeces = [1::2,0] = seek minima  
-            plt.scatter(particle_positions[::2,0],particle_positions[::2,1],c='red',marker='+', alpha=0.5, label='maxima seeking particles')
-            plt.scatter(particle_positions[1::2,0],particle_positions[1::2,1],c='blue',marker='x', alpha=0.5, label='minima seeking particles')
+            plt.scatter(mlab_pca.Y[::2,0],mlab_pca.Y[::2,1],c='red',marker='+', s=75, alpha=0.5, label='maxima seeking particles')
+            plt.scatter(mlab_pca.Y[1::2,0],mlab_pca.Y[1::2,1],c='blue',marker='x', s=50, alpha=0.5, label='minima seeking particles')            
             
-            plt.xlim(-2, 2)
-            plt.ylim(-2, 2)
-            #plt.axis('off')
+            plt.axis('equal')
             plt.legend(loc='best')
-            #plt.subplot(212) 
-            #plt.plot(particle_values)  
+            
             plt.draw()
             #global frame_counter
             #plt.savefig("puppetfig"+str(frame_counter).zfill(3))
@@ -205,7 +199,7 @@ def make_waves(index) : #generates out-of-sync sine waves for each servo
         return 0.5
     now = rospy.get_rostime()
     time = now.to_sec()-startTime.to_sec()
-    minus_one_to_one = sin (time*(1+index/6.0))
+    minus_one_to_one = sin (time*(1+index/12.0))
     minus_one_to_one/=10;
     zero_to_one = (minus_one_to_one+1.0)/2.0
     return  zero_to_one
