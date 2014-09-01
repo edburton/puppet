@@ -35,10 +35,7 @@ pub5 = rospy.Publisher(ronex_path+"command/pwm/5", PWM)
 
 pwms = [pub0,pub1,pub2,pub3,pub4,pub5]
 
-online=False #Set to false to run Particle Swarm Optimization demo without robot
-
-if online:
-    stdscr = curses.initscr()
+stdscr = curses.initscr()
 
 active = False 
 supressed=True
@@ -70,6 +67,10 @@ particle_global_maxima_value=-np.inf
 particle_global_maxima_timeline=[]
 particle_global_average_timeline=[]
 
+fig = plt.figure()
+ax = plt.axes(xlim=(0, 2), ylim=(-2, 2))
+line, = ax.plot([], [], lw=2)
+
 def func(p) : #Trivial function for testing Particle Swarm Omptomization
     z=0.0
     for n in p:
@@ -78,18 +79,27 @@ def func(p) : #Trivial function for testing Particle Swarm Omptomization
     return z
 
 frame_counter=0
+debug_timer=0;
+
 
 def subscriber_cb(msg) : #called whenever RoNeX updates (ie: every frame)
     global active, supressed
     
-    if online:
-        c = stdscr.getch() #get keypresses from console 
-        if c != curses.ERR:
-            if c == ord(' ') : #space bar toggles all servos on/off
-                active = not active
-                configure_servos(active)
-            elif c == ord('z') : #z toggles wave behaviour on/off
-                supressed = not supressed
+    now = rospy.get_rostime()
+    time = now.to_sec()-startTime.to_sec()
+    global debug_timer
+    stdscr.addstr(0,0,str(time-debug_timer)+", ")
+    print str(time-debug_timer)+". "
+    debug_timer=time
+    
+    stdscr.addstr("!!!!!!!!!!!!!!!")
+    c = stdscr.getch() #get keypresses from console 
+    if c != curses.ERR:
+        if c == ord(' ') : #space bar toggles all servos on/off
+            active = not active
+            configure_servos(active)
+        elif c == ord('z') : #z toggles wave behaviour on/off
+            supressed = not supressed
     
     #------------------------
     
@@ -97,78 +107,75 @@ def subscriber_cb(msg) : #called whenever RoNeX updates (ie: every frame)
 
     analogue_input_queue.append(analogue_inputs)
     
-    if len(analogue_input_queue)>3:
-        a1 = []
-        a2 = []
-        for n in range(12):
-            a1.append((analogue_input_queue[0][n]+analogue_input_queue[1][n])/2)
-            a2.append((analogue_input_queue[2][n]+analogue_input_queue[3][n])/2)
-        d = 0.0
-        for n in range(12):
-            d=d+(a1[n]-a2[n])**2
-        d = sqrt(d)
-        pub_output.publish(d)
-        #rospy.loginfo("analogue_input_queue.length = %d", len(analogue_input_queue))
-        
-        output_positions = map(make_waves, range(1, 13)) #get an array of desired servo positions
-        
-        if not online: #PSO test starts here
-            global particle_velocities, particle_positions, particle_swarm_size, particle_global_maxima_position, particle_global_maxima_value
-            
-            for index in range(particle_swarm_size): #update velocities
-                for i in range(dimension):
-                    r1 = np.random.uniform()
-                    r2 = np.random.uniform()
-                    social=0.0
-                    cognitive=0.0
-                    if not np.isnan(particle_global_maxima_position[i]) :
-                        social = c1 * r1 * (particle_global_maxima_position[i] - particle_positions[index,i])
-                    if not np.isnan(particle_maxima_positions[index,i]) :
-                        cognitive = c2 * r2 * (particle_maxima_positions[index,i] - particle_positions[index,i])  
-                    particle_velocities[index,i] = (w * particle_velocities[index,i]) + social + cognitive          
-            
-            average=0.0
-            
-            for index in range(particle_swarm_size): #update cognitive and social maxima
-                
-                particle_values[index]=func(particle_positions[index,:])
-                average=average+particle_values[index]
-                if particle_values[index] > particle_global_maxima_value:
-                    particle_global_maxima_value=particle_values[index]
-                    for i in range(dimension): 
-                        particle_global_maxima_position[i]=particle_positions[index,i]
-                if particle_values[index] > particle_maxima_values[index]:
-                    particle_maxima_values[index]=particle_values[index]
-                    for i in range(dimension):                    
-                        particle_maxima_positions[index,i]=particle_positions[index,i]
-                
-            average=average/particle_swarm_size
-            particle_global_average_timeline.append(average)
-            particle_global_maxima_timeline.append(particle_global_maxima_value)
-            
-            particle_positions=np.add(particle_positions,particle_velocities)   #add velocities to positions
-                        
-            mlab_pca = mlabPCA(particle_positions) 
-            
-            plt.clf()
-            fig=plt.gcf()
-            fig.add_subplot(211)
-            plt.scatter(mlab_pca.Y[:,0],mlab_pca.Y[:,1],c='red',marker='+', s=75, alpha=0.5, label='maxima seeking particles')
-            
-            plt.axis('equal')
-            #plt.xlim(-1, 2)
-            plt.legend(loc='best')
-            
-            fig.add_subplot(212)
-            plt.plot(particle_global_maxima_timeline,label='global maxima')
-            plt.plot(particle_global_average_timeline,label='average')
-            plt.legend(loc='best')
-            
-            plt.draw()
-            #global frame_counter
-            #plt.savefig("puppetfig"+str(frame_counter).zfill(3))
-            #frame_counter=frame_counter+1
+    time=time/4.0
+    time_int=int(floor(time))
+    output_index=time_int%particle_swarm_size
+    output_index_2=(output_index+1)%particle_swarm_size
     
+    #output_positions = map(make_waves, range(1, 13)) #get an array of desired servo positions
+    if not supressed:
+        output_positions = particle_positions[output_index] 
+    else:
+        output_positions = map(make_waves, range(1, 13))
+    
+    
+    
+    global particle_velocities, particle_positions, particle_swarm_size, particle_global_maxima_position, particle_global_maxima_value
+    
+    for index in range(particle_swarm_size): #update velocities
+        for i in range(dimension):
+            r1 = np.random.uniform()
+            r2 = np.random.uniform()
+            social=0.0
+            cognitive=0.0
+            if not np.isnan(particle_global_maxima_position[i]) :
+                social = c1 * r1 * (particle_global_maxima_position[i] - particle_positions[index,i])
+            if not np.isnan(particle_maxima_positions[index,i]) :
+                cognitive = c2 * r2 * (particle_maxima_positions[index,i] - particle_positions[index,i])  
+            particle_velocities[index,i] = (w * particle_velocities[index,i]) + social + cognitive          
+    
+    average=0.0
+    
+    for index in range(particle_swarm_size): #update cognitive and social maxima
+        
+        particle_values[index]=func(particle_positions[index,:])
+        average=average+particle_values[index]
+        if particle_values[index] > particle_global_maxima_value:
+            particle_global_maxima_value=particle_values[index]
+            for i in range(dimension): 
+                particle_global_maxima_position[i]=particle_positions[index,i]
+        if particle_values[index] > particle_maxima_values[index]:
+            particle_maxima_values[index]=particle_values[index]
+            for i in range(dimension):                    
+                particle_maxima_positions[index,i]=particle_positions[index,i]
+        
+    average=average/particle_swarm_size
+    particle_global_average_timeline.append(average)
+    particle_global_maxima_timeline.append(particle_global_maxima_value)
+    
+    #particle_positions=np.add(particle_positions,particle_velocities)   #add velocities to positions
+                
+##    mlab_pca = mlabPCA(particle_positions) 
+##    
+##    plt.clf()
+##    fig=plt.gcf()
+##    fig.add_subplot(211)
+##    plt.scatter(mlab_pca.Y[:,0],mlab_pca.Y[:,1],c='red',marker='+', label='maxima seeking particles')
+##    
+##    plt.axis('equal')
+##    #plt.xlim(-1, 2)
+##    plt.legend(loc='best')
+##    
+##    fig.add_subplot(212)
+##    plt.plot(particle_global_maxima_timeline, label='global maxima')
+##    plt.plot(particle_global_average_timeline, label='average')
+##    plt.legend(loc='best')
+##    
+##    plt.draw()
+    #global frame_counter
+    #plt.savefig("puppetfig"+str(frame_counter).zfill(3))
+    #frame_counter=frame_counter+1
+
     #INSERT INTERESTING BIT HERE    
     
     #------------------------
@@ -221,14 +228,12 @@ def set_servo_angles(angles_zero_to_one) : #set all the servo from a list of pos
 
   
 def shutdown(): #put the console back to normal and turn the servos off
-    global online    
     configure_servos(False)
-    if online:
-        curses.nocbreak()
-        stdscr.keypad(0)
-        curses.echo()
-        curses.endwin()
-        plt.close('all')
+    curses.nocbreak()
+    stdscr.keypad(0)
+    curses.echo()
+    curses.endwin()
+    plt.close('all')
     
 
 def configure_servos(on): #turn all servos on or off
@@ -240,25 +245,35 @@ def configure_servos(on): #turn all servos on or off
 
 def setup_visualisation():
     plt.show()
-    #mng = plt.get_current_fig_manager()
-    #mng.resize(*mng.window.maxsize())
     plt.ion()
     
     
+def init():
+    line.set_data([], [])
+    return line,
+
+# animation function.  This is called sequentially
+def animate(i):
+    x = np.linspace(0, 2, 1000)
+    y = np.sin(2 * np.pi * (x - 0.01 * i))
+    line.set_data(x, y)
+    return line,
 
 if __name__ == "__main__": #setup
-    setup_visualisation()
+    #setup_visualisation()
+    #anim = animation.FuncAnimation(fig, animate, init_func=init, frames=200, interval=20, blit=True)
+    #plt.ion()
+    #plt.show()    
     
     rospy.init_node("change_ronex_configuration_py")
     rospy.on_shutdown(shutdown)
     configure_servos(active)
     startTime=rospy.get_rostime();
     rospy.Subscriber(ronex_path+"state", GeneralIOState, subscriber_cb)
-    if online:
-        stdscr.clear()
-        stdscr.nodelay(1)
-        stdscr.addstr("Hello RoNeX\n")
-        curses.noecho() #make the terminal accept individual key-presses and not echo them to the screen
-        
-    
+    stdscr.clear()
+    stdscr.nodelay(1)
+    stdscr.addstr("Hello RoNeX\n")
+    curses.noecho() #make the terminal accept individual key-presses and not echo them to the screen
     rospy.spin()
+
+# initialization function: plot the background of each frame
