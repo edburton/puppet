@@ -52,24 +52,23 @@ pub_output = rospy.Publisher('puppet', Float32)
 w = 0.729844 # Inertia weight to prevent velocities becoming too large
 c1 = 1.496180 # Scaling co-efficient on the social component
 c2 = 1.496180 # Scaling co-efficient on the cognitive component
-dimension = 12 # Size of the problem
-particle_swarm_size = 16
+dimension = 24 # Size of the problem
+particle_swarm_size = 24
 particle_positions = np.random.rand(particle_swarm_size,dimension)
 for index in range(particle_swarm_size):
     for i in range(dimension):
-        particle_positions[index,i]=np.random.uniform(-1,1)
+        particle_positions[index,i]=np.random.uniform(0.4,0.6)
 particle_values = [np.nan]*particle_swarm_size
 particle_velocities = np.zeros_like(particle_positions)
 particle_maxima_positions=np.zeros_like(particle_positions)
 particle_maxima_positions[:]=np.nan
-particle_minima_positions=np.zeros_like(particle_positions)
-particle_minima_positions[:]=np.nan
 particle_maxima_values=[-np.inf]*particle_swarm_size
-particle_minima_values=[np.inf]*particle_swarm_size
 particle_global_maxima_position=[np.nan]*dimension
-particle_global_minima_position=[np.nan]*dimension
 particle_global_maxima_value=-np.inf
-particle_global_minima_value=np.inf
+
+
+particle_global_maxima_timeline=[]
+particle_global_average_timeline=[]
 
 def func(p) : #Trivial function for testing Particle Swarm Omptomization
     z=0.0
@@ -114,7 +113,7 @@ def subscriber_cb(msg) : #called whenever RoNeX updates (ie: every frame)
         output_positions = map(make_waves, range(1, 13)) #get an array of desired servo positions
         
         if not online: #PSO test starts here
-            global particle_velocities, particle_positions, particle_swarm_size, particle_global_maxima_position, particle_global_maxima_value, particle_global_minima_position, particle_global_minima_value
+            global particle_velocities, particle_positions, particle_swarm_size, particle_global_maxima_position, particle_global_maxima_value
             
             for index in range(particle_swarm_size): #update velocities
                 for i in range(dimension):
@@ -122,23 +121,18 @@ def subscriber_cb(msg) : #called whenever RoNeX updates (ie: every frame)
                     r2 = np.random.uniform()
                     social=0.0
                     cognitive=0.0
-                    if index%2==0: #Even indeces seek maxima, odd indeces seek minima
-                        if not np.isnan(particle_global_maxima_position[i]) :
-                            social = c1 * r1 * (particle_global_maxima_position[i] - particle_positions[index,i])
-                        if not np.isnan(particle_maxima_positions[index,i]) :
-                            cognitive = c2 * r2 * (particle_maxima_positions[index,i] - particle_positions[index,i])  
-                    else:
-                        if not np.isnan(particle_global_minima_position[i]) :
-                            social = c1 * r1 * (particle_global_minima_position[i] - particle_positions[index,i])
-                        if not np.isnan(particle_minima_positions[index,i]) :
-                            cognitive = c2 * r2 * (particle_minima_positions[index,i] - particle_positions[index,i]) 
-                             
+                    if not np.isnan(particle_global_maxima_position[i]) :
+                        social = c1 * r1 * (particle_global_maxima_position[i] - particle_positions[index,i])
+                    if not np.isnan(particle_maxima_positions[index,i]) :
+                        cognitive = c2 * r2 * (particle_maxima_positions[index,i] - particle_positions[index,i])  
                     particle_velocities[index,i] = (w * particle_velocities[index,i]) + social + cognitive          
             
-            for index in range(particle_swarm_size): #update cognitive and social maxima and minima
+            average=0.0
+            
+            for index in range(particle_swarm_size): #update cognitive and social maxima
                 
                 particle_values[index]=func(particle_positions[index,:])
-                
+                average=average+particle_values[index]
                 if particle_values[index] > particle_global_maxima_value:
                     particle_global_maxima_value=particle_values[index]
                     for i in range(dimension): 
@@ -148,28 +142,26 @@ def subscriber_cb(msg) : #called whenever RoNeX updates (ie: every frame)
                     for i in range(dimension):                    
                         particle_maxima_positions[index,i]=particle_positions[index,i]
                 
-                if particle_values[index] < particle_global_minima_value:
-                    particle_global_minima_value=particle_values[index]
-                    for i in range(dimension): 
-                        particle_global_minima_position[i]=particle_positions[index,i]
-                if particle_values[index] < particle_minima_values[index]:
-                    particle_minima_values[index]=particle_values[index]
-                    for i in range(dimension):                    
-                        particle_minima_positions[index,i]=particle_positions[index,i]
-                
-                
+            average=average/particle_swarm_size
+            particle_global_average_timeline.append(average)
+            particle_global_maxima_timeline.append(particle_global_maxima_value)
+            
             particle_positions=np.add(particle_positions,particle_velocities)   #add velocities to positions
                         
             mlab_pca = mlabPCA(particle_positions) 
             
             plt.clf()
             fig=plt.gcf()
-            fig.add_subplot(111)
-            
-            plt.scatter(mlab_pca.Y[::2,0],mlab_pca.Y[::2,1],c='red',marker='+', s=75, alpha=0.5, label='maxima seeking particles')
-            plt.scatter(mlab_pca.Y[1::2,0],mlab_pca.Y[1::2,1],c='blue',marker='x', s=50, alpha=0.5, label='minima seeking particles')            
+            fig.add_subplot(211)
+            plt.scatter(mlab_pca.Y[:,0],mlab_pca.Y[:,1],c='red',marker='+', s=75, alpha=0.5, label='maxima seeking particles')
             
             plt.axis('equal')
+            #plt.xlim(-1, 2)
+            plt.legend(loc='best')
+            
+            fig.add_subplot(212)
+            plt.plot(particle_global_maxima_timeline,label='global maxima')
+            plt.plot(particle_global_average_timeline,label='average')
             plt.legend(loc='best')
             
             plt.draw()
@@ -247,8 +239,11 @@ def configure_servos(on): #turn all servos on or off
 
 
 def setup_visualisation():
-    plt.ion()
     plt.show()
+    #mng = plt.get_current_fig_manager()
+    #mng.resize(*mng.window.maxsize())
+    plt.ion()
+    
     
 
 if __name__ == "__main__": #setup
