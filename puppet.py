@@ -5,6 +5,7 @@ import rospy
 import curses
 import pickle
 import dynamic_reconfigure.client
+import copy
 from sr_ronex_msgs.msg import PWM, GeneralIOState
 from std_msgs.msg import Bool
 from std_msgs.msg import Float32
@@ -67,10 +68,6 @@ particle_global_maxima_value=-np.inf
 particle_global_maxima_timeline=[]
 particle_global_average_timeline=[]
 
-fig = plt.figure()
-ax = plt.axes(xlim=(0, 2), ylim=(-2, 2))
-line, = ax.plot([], [], lw=2)
-
 def func(p) : #Trivial function for testing Particle Swarm Omptomization
     z=0.0
     for n in p:
@@ -84,15 +81,13 @@ debug_timer=0;
 
 def subscriber_cb(msg) : #called whenever RoNeX updates (ie: every frame)
     global active, supressed
-    
+    global particle_velocities, particle_positions, particle_swarm_size, particle_global_maxima_position, particle_global_maxima_value
     now = rospy.get_rostime()
     time = now.to_sec()-startTime.to_sec()
     global debug_timer
     stdscr.addstr(0,0,str(time-debug_timer)+", ")
-    print str(time-debug_timer)+". "
     debug_timer=time
     
-    stdscr.addstr("!!!!!!!!!!!!!!!")
     c = stdscr.getch() #get keypresses from console 
     if c != curses.ERR:
         if c == ord(' ') : #space bar toggles all servos on/off
@@ -112,16 +107,14 @@ def subscriber_cb(msg) : #called whenever RoNeX updates (ie: every frame)
     output_index=time_int%particle_swarm_size
     output_index_2=(output_index+1)%particle_swarm_size
     
+       
+    
     #output_positions = map(make_waves, range(1, 13)) #get an array of desired servo positions
     if not supressed:
         output_positions = particle_positions[output_index] 
     else:
         output_positions = map(make_waves, range(1, 13))
-    
-    
-    
-    global particle_velocities, particle_positions, particle_swarm_size, particle_global_maxima_position, particle_global_maxima_value
-    
+      
     for index in range(particle_swarm_size): #update velocities
         for i in range(dimension):
             r1 = np.random.uniform()
@@ -149,32 +142,11 @@ def subscriber_cb(msg) : #called whenever RoNeX updates (ie: every frame)
             for i in range(dimension):                    
                 particle_maxima_positions[index,i]=particle_positions[index,i]
         
-    average=average/particle_swarm_size
-    particle_global_average_timeline.append(average)
-    particle_global_maxima_timeline.append(particle_global_maxima_value)
+    average= average/particle_swarm_size
+    particle_global_average_timeline.append(average+np.random.uniform(0.2,0.4))
+    particle_global_maxima_timeline.append(particle_global_maxima_value+np.random.uniform(0.4,0.6))
     
     #particle_positions=np.add(particle_positions,particle_velocities)   #add velocities to positions
-                
-##    mlab_pca = mlabPCA(particle_positions) 
-##    
-##    plt.clf()
-##    fig=plt.gcf()
-##    fig.add_subplot(211)
-##    plt.scatter(mlab_pca.Y[:,0],mlab_pca.Y[:,1],c='red',marker='+', label='maxima seeking particles')
-##    
-##    plt.axis('equal')
-##    #plt.xlim(-1, 2)
-##    plt.legend(loc='best')
-##    
-##    fig.add_subplot(212)
-##    plt.plot(particle_global_maxima_timeline, label='global maxima')
-##    plt.plot(particle_global_average_timeline, label='average')
-##    plt.legend(loc='best')
-##    
-##    plt.draw()
-    #global frame_counter
-    #plt.savefig("puppetfig"+str(frame_counter).zfill(3))
-    #frame_counter=frame_counter+1
 
     #INSERT INTERESTING BIT HERE    
     
@@ -247,33 +219,58 @@ def setup_visualisation():
     plt.show()
     plt.ion()
     
+
+fig = plt.figure()
+ax1 = fig.add_subplot(211)
+average_graph, = ax1.plot([], [],label='average')
+plt.legend(loc='best')
+
+ax2 = fig.add_subplot(212)
+max_graph, = ax2.plot([], [],label='max')
+plt.legend(loc='best')
     
 def init():
-    line.set_data([], [])
-    return line,
+    average_graph.set_data([],[])
+    max_graph.set_data([],[])
+    return ax1, ax2, 
 
 # animation function.  This is called sequentially
 def animate(i):
-    x = np.linspace(0, 2, 1000)
-    y = np.sin(2 * np.pi * (x - 0.01 * i))
-    line.set_data(x, y)
-    return line,
+    global particle_global_average_timeline
+    p=list(particle_global_average_timeline)
+    n = len(p)
+    x = np.arange(0,n)
+    ax1.set_xlim(0,n)
+    ax1.set_ylim(min(p),max(p))
+    average_graph.set_data(x, p)
+    
+    global particle_global_maxima_timeline
+    p=list(particle_global_maxima_timeline)
+    n = len(p)
+    x = np.arange(0,n)
+    ax2.set_xlim(0,n)
+    ax2.set_ylim(min(p),max(p))
+    max_graph.set_data(x, p)
+    
+    return ax1, ax2,
+
+
 
 if __name__ == "__main__": #setup
     #setup_visualisation()
-    #anim = animation.FuncAnimation(fig, animate, init_func=init, frames=200, interval=20, blit=True)
-    #plt.ion()
-    #plt.show()    
-    
     rospy.init_node("change_ronex_configuration_py")
-    rospy.on_shutdown(shutdown)
     configure_servos(active)
-    startTime=rospy.get_rostime();
-    rospy.Subscriber(ronex_path+"state", GeneralIOState, subscriber_cb)
     stdscr.clear()
     stdscr.nodelay(1)
     stdscr.addstr("Hello RoNeX\n")
     curses.noecho() #make the terminal accept individual key-presses and not echo them to the screen
+    rospy.on_shutdown(shutdown)
+    startTime=rospy.get_rostime();
+    rospy.Subscriber(ronex_path+"state", GeneralIOState, subscriber_cb)
+    
+    anim = animation.FuncAnimation(fig, animate, init_func=init, interval=250, blit=False)
+    plt.show() 
     rospy.spin()
+    
 
 # initialization function: plot the background of each frame
