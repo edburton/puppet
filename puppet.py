@@ -2,7 +2,6 @@
 from __future__ import division
 
 import rospy
-import curses
 import pickle
 import dynamic_reconfigure.client
 import copy
@@ -25,8 +24,6 @@ from pylab import *
 ronex_id = "1403017360"
 ronex_path = "/ronex/general_io/" + ronex_id + "/"
 
-startTime=-1;
-
 pub0 = rospy.Publisher(ronex_path+"command/pwm/0", PWM)
 pub1 = rospy.Publisher(ronex_path+"command/pwm/1", PWM)
 pub2 = rospy.Publisher(ronex_path+"command/pwm/2", PWM)
@@ -36,15 +33,9 @@ pub5 = rospy.Publisher(ronex_path+"command/pwm/5", PWM)
 
 pwms = [pub0,pub1,pub2,pub3,pub4,pub5]
 
-stdscr = curses.initscr()
-
-active = False 
-supressed=True
-
 analogue_input_queue = deque([],4) 
 
 pub_output = rospy.Publisher('puppet', Float32)
-
 
 #Particle Swarm Optomization variables
 w = 0.729844 # Inertia weight to prevent velocities becoming too large
@@ -64,9 +55,17 @@ particle_maxima_values=[-np.inf]*particle_swarm_size
 particle_global_maxima_position=[np.nan]*dimension
 particle_global_maxima_value=-np.inf
 
-
 particle_global_maxima_timeline=[]
 particle_global_average_timeline=[]
+
+gesture_duration=1.0
+posture_duration=0.25
+pause_duration=0.5
+
+particle_of_interest=np.nan
+particle_of_interest_start_time=0.0
+particle_modes=['null','first_gesture','first_posture','first_pause','second_posture','second_gesture']
+particle_of_interest_mode=0
 
 def func(p) : #Trivial function for testing Particle Swarm Omptomization
     z=0.0
@@ -78,42 +77,49 @@ def func(p) : #Trivial function for testing Particle Swarm Omptomization
 frame_counter=0
 debug_timer=0;
 
-
 def subscriber_cb(msg) : #called whenever RoNeX updates (ie: every frame)
-    global active, supressed
+    global gesture_duration, posture_duration, pause_duration
+    global particle_of_interest, particle_of_interest_start_time,particle_modes,particle_of_interest_mode
     global particle_velocities, particle_positions, particle_swarm_size, particle_global_maxima_position, particle_global_maxima_value
     now = rospy.get_rostime()
-    time = now.to_sec()-startTime.to_sec()
+    time = now.to_sec()
     global debug_timer
-    stdscr.addstr(0,0,str(time-debug_timer)+", ")
+    #print(str(time-debug_timer))
     debug_timer=time
-    
-    c = stdscr.getch() #get keypresses from console 
-    if c != curses.ERR:
-        if c == ord(' ') : #space bar toggles all servos on/off
-            active = not active
-            configure_servos(active)
-        elif c == ord('z') : #z toggles wave behaviour on/off
-            supressed = not supressed
     
     #------------------------
     
     analogue_inputs = get_servo_positions(msg)
-
+    
     analogue_input_queue.append(analogue_inputs)
     
-    time=time/4.0
-    time_int=int(floor(time))
-    output_index=time_int%particle_swarm_size
-    output_index_2=(output_index+1)%particle_swarm_size
     
+    if np.isnan(particle_of_interest):
+        for index in range(particle_swarm_size):
+            if np.isnan(particle_values[index]):
+                particle_of_interest=index
+                particle_of_interest_start_time=time
+                particle_of_interest_mode=1
+                configure_servos(True)
+                print('particle_of_interest = '+str(particle_of_interest))
+                break
+    
+    if particle_of_interest_mode==1:
+        if (time-particle_of_interest_start_time)>(gesture_duration+posture_duration):
+            particle_of_interest_mode=2
+            configure_servos(False)
+    
+    if (time-particle_of_interest_start_time)>((gesture_duration*2)+(posture_duration*2)+pause_duration):
+        particle_values[particle_of_interest]=1
+        particle_of_interest=np.nan
+        particle_of_interest_start_time=np.nan
+        particle_of_interest_mode=0
+        configure_servos(False)
        
     
-    #output_positions = map(make_waves, range(1, 13)) #get an array of desired servo positions
-    if not supressed:
-        output_positions = particle_positions[output_index] 
-    else:
-        output_positions = map(make_waves, range(1, 13))
+    if not np.isnan(particle_of_interest):
+        output_positions = particle_positions[particle_of_interest]
+        print('particle_of_interest_mode = '+particle_modes[particle_of_interest_mode])
       
     for index in range(particle_swarm_size): #update velocities
         for i in range(dimension):
@@ -131,7 +137,7 @@ def subscriber_cb(msg) : #called whenever RoNeX updates (ie: every frame)
     
     for index in range(particle_swarm_size): #update cognitive and social maxima
         
-        particle_values[index]=func(particle_positions[index,:])
+        #particle_values[index]=func(particle_positions[index,:])
         average=average+particle_values[index]
         if particle_values[index] > particle_global_maxima_value:
             particle_global_maxima_value=particle_values[index]
@@ -147,12 +153,12 @@ def subscriber_cb(msg) : #called whenever RoNeX updates (ie: every frame)
     particle_global_maxima_timeline.append(particle_global_maxima_value+np.random.uniform(0.4,0.6))
     
     #particle_positions=np.add(particle_positions,particle_velocities)   #add velocities to positions
-
+    
     #INSERT INTERESTING BIT HERE    
     
     #------------------------
         
-    if active:
+    if not np.isnan(particle_of_interest):
         set_servo_angles(output_positions)
     #else: 
     #    startTime=rospy.get_rostime()
@@ -163,17 +169,6 @@ def get_servo_positions(msg) : #get analogue value from an individual servo
     for index in range(12): #fill an array with the analogue servo inputs
         analogue_inputs.append(msg.analogue[index]) # range 0 -- 3690
     return analogue_inputs 
-
-
-def make_waves(index) : #generates out-of-sync sine waves for each servo
-    if supressed :
-        return 0.5
-    now = rospy.get_rostime()
-    time = now.to_sec()-startTime.to_sec()
-    minus_one_to_one = sin (time*(1+index/12.0))
-    minus_one_to_one/=10;
-    zero_to_one = (minus_one_to_one+1.0)/2.0
-    return  zero_to_one
 
 
 def angle_zero_to_one_to_pwm(angle_zero_to_one) :
@@ -190,6 +185,7 @@ def set_servo_angle(angle_zero_to_one,servo_index) : #set an individual servo po
         pwm_message.pwm_on_time_1 =  angle_zero_to_one_to_pwm(angle_zero_to_one)
     
 
+
 def set_servo_angles(angles_zero_to_one) : #set all the servo from a list of positions
     pwm_message = PWM()
     pwm_message.pwm_period = 64000
@@ -198,27 +194,30 @@ def set_servo_angles(angles_zero_to_one) : #set all the servo from a list of pos
         pwm_message.pwm_on_time_1 =  angle_zero_to_one_to_pwm(angles_zero_to_one[(index*2)+1])
         pwm.publish(pwm_message)
 
-  
+
 def shutdown(): #put the console back to normal and turn the servos off
-    configure_servos(False)
-    curses.nocbreak()
-    stdscr.keypad(0)
-    curses.echo()
-    curses.endwin()
+    centre_servos()
     plt.close('all')
-    
+    configure_servos(False)
+
+
+def centre_servos():
+    pwm=np.empty(12); pwm.fill(0.5) 
+    set_servo_angles(pwm)   
+    configure_servos(True)
+    set_servo_angles(pwm)
+
 
 def configure_servos(on): #turn all servos on or off
     client = dynamic_reconfigure.client.Client(ronex_path)
     params = { 'input_mode_0' : not on, 'input_mode_1' : not on, 'input_mode_2' : not on,'input_mode_3' : not on,'input_mode_4' : not on,'input_mode_5' : not on,'input_mode_6' : not on,'input_mode_7' : not on,'input_mode_8' : not on,'input_mode_9' : not on,'input_mode_10' : not on,'input_mode_11' : not on,}
     config = client.update_configuration(params)
-    
 
 
 def setup_visualisation():
     plt.show()
     plt.ion()
-    
+
 
 fig = plt.figure()
 ax1 = fig.add_subplot(211)
@@ -228,11 +227,13 @@ plt.legend(loc='best')
 ax2 = fig.add_subplot(212)
 max_graph, = ax2.plot([], [],label='max')
 plt.legend(loc='best')
-    
+
+
 def init():
     average_graph.set_data([],[])
     max_graph.set_data([],[])
     return ax1, ax2, 
+
 
 # animation function.  This is called sequentially
 def animate(i):
@@ -259,18 +260,13 @@ def animate(i):
 if __name__ == "__main__": #setup
     #setup_visualisation()
     rospy.init_node("change_ronex_configuration_py")
-    configure_servos(active)
-    stdscr.clear()
-    stdscr.nodelay(1)
-    stdscr.addstr("Hello RoNeX\n")
-    curses.noecho() #make the terminal accept individual key-presses and not echo them to the screen
+    centre_servos()
+    
     rospy.on_shutdown(shutdown)
-    startTime=rospy.get_rostime();
     rospy.Subscriber(ronex_path+"state", GeneralIOState, subscriber_cb)
     
-    anim = animation.FuncAnimation(fig, animate, init_func=init, interval=250, blit=False)
-    plt.show() 
+    #anim = animation.FuncAnimation(fig, animate, init_func=init, interval=250, blit=False)
+    #plt.show() 
     rospy.spin()
     
 
-# initialization function: plot the background of each frame
