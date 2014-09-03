@@ -49,7 +49,7 @@ particle_swarm_size = dimension
 particle_positions = np.random.rand(particle_swarm_size,dimension)
 for index in range(particle_swarm_size):
     for i in range(dimension):
-        particle_positions[index,i]=np.random.uniform(0.4,0.6)
+        particle_positions[index,i]=np.random.uniform(0.3,0.7)
 particle_values = [np.nan]*particle_swarm_size
 particle_velocities = np.zeros_like(particle_positions)
 particle_maxima_positions=np.zeros_like(particle_positions)
@@ -61,14 +61,16 @@ particle_global_maxima_value=-np.inf
 particle_global_maxima_timeline=[]
 particle_global_average_timeline=[]
 
-gesture_duration=2.0
-posture_duration=0.25
-pause_duration=0.5
+gesture_duration=1.0
+posture_duration=1.0
+pause_duration=1.0
 
 particle_of_interest=np.nan
 particle_of_interest_start_time=0.0
-particle_modes=['null','first_gesture','first_posture','first_pause','second_posture','second_gesture']
+particle_modes=['null','first_gesture','first_posture','first_pause','second_posture','second_gesture','second_pause']
 particle_of_interest_mode=0
+
+output_positions=[0.5]*servos
 
 def func(p) : #Trivial function for testing Particle Swarm Omptomization
     z=0.0
@@ -81,7 +83,7 @@ frame_counter=0
 debug_timer=0;
 
 def subscriber_cb(msg) : #called whenever RoNeX updates (ie: every frame)
-    global gesture_duration, posture_duration, pause_duration
+    global gesture_duration, posture_duration, pause_duration, output_positions
     global particle_of_interest, particle_of_interest_start_time,particle_modes,particle_of_interest_mode
     global particle_velocities, particle_positions, particle_swarm_size, particle_global_maxima_position, particle_global_maxima_value
     now = rospy.get_rostime()
@@ -90,7 +92,6 @@ def subscriber_cb(msg) : #called whenever RoNeX updates (ie: every frame)
     #print(str(time-debug_timer))
     debug_timer=time
     
-    output_positions=[0.5]*servos
     #------------------------
     
     analogue_inputs = get_servo_positions(msg)
@@ -109,22 +110,50 @@ def subscriber_cb(msg) : #called whenever RoNeX updates (ie: every frame)
                 break
     
     if particle_of_interest_mode==1:
-        t=np.clip(0,1,(time-particle_of_interest_start_time)/gesture_duration)
-        output_positions=particle_positions[particle_of_interest,:servos]
+        t=np.clip((time-particle_of_interest_start_time)/gesture_duration,0,1)
         for i in range(servos):
-            output_positions[i]=output_positions[i]+(particle_positions[particle_of_interest,servos+i]-output_positions[i])*t
+            output_positions[i]=(particle_positions[particle_of_interest,i]*(1-t))+(particle_positions[particle_of_interest,servos+i]*t)
     
     if particle_of_interest_mode==1:
-        if (time-particle_of_interest_start_time)>(gesture_duration+posture_duration):
+        if (time-particle_of_interest_start_time)>gesture_duration:
             particle_of_interest_mode=2
-            configure_servos(False)
+            
+    if particle_of_interest_mode==2:
+        output_positions=list(particle_positions[particle_of_interest,servos:])
     
-    if (time-particle_of_interest_start_time)>((gesture_duration*2)+(posture_duration*2)+pause_duration):
-        particle_values[particle_of_interest]=1
-        particle_of_interest=np.nan
-        particle_of_interest_start_time=np.nan
-        particle_of_interest_mode=0
-        configure_servos(False)
+    if particle_of_interest_mode==2:
+        if (time-particle_of_interest_start_time)>gesture_duration+posture_duration:
+            particle_of_interest_mode=3
+            configure_servos(False)
+            
+    if particle_of_interest_mode==3:
+        if (time-particle_of_interest_start_time)>gesture_duration+posture_duration+pause_duration:
+            particle_of_interest_mode=4           
+            configure_servos(True)
+    
+    if particle_of_interest_mode==4:
+        output_positions=list(particle_positions[particle_of_interest,:servos])
+    
+    if particle_of_interest_mode==4:
+        if (time-particle_of_interest_start_time)>gesture_duration+posture_duration+pause_duration+posture_duration:
+            particle_of_interest_mode=5           
+                
+    if particle_of_interest_mode==5:
+        t=np.clip((time-(particle_of_interest_start_time+gesture_duration+posture_duration+pause_duration+posture_duration))/gesture_duration,0,1)
+        for i in range(servos):
+            output_positions[i]=(particle_positions[particle_of_interest,i]*(1-t))+(particle_positions[particle_of_interest,servos+i]*t)
+    
+    if particle_of_interest_mode==5:
+        if (time-particle_of_interest_start_time)>((gesture_duration*2)+(posture_duration*2)+pause_duration):
+            configure_servos(False)
+            particle_of_interest_mode=6  
+    
+    if particle_of_interest_mode==6:
+        if (time-particle_of_interest_start_time)>((gesture_duration*2)+(posture_duration*2)+(pause_duration*2)):
+            particle_values[particle_of_interest]=1
+            particle_of_interest=np.nan
+            particle_of_interest_start_time=np.nan
+            particle_of_interest_mode=0
        
       
     for index in range(particle_swarm_size): #update velocities
