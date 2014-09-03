@@ -41,8 +41,11 @@ pub_output = rospy.Publisher('puppet', Float32)
 w = 0.729844 # Inertia weight to prevent velocities becoming too large
 c1 = 1.496180 # Scaling co-efficient on the social component
 c2 = 1.496180 # Scaling co-efficient on the cognitive component
-dimension = 24 # Size of the problem
-particle_swarm_size = 24
+
+servos = 12
+
+dimension = servos*2 # Size of the problem
+particle_swarm_size = dimension
 particle_positions = np.random.rand(particle_swarm_size,dimension)
 for index in range(particle_swarm_size):
     for i in range(dimension):
@@ -58,7 +61,7 @@ particle_global_maxima_value=-np.inf
 particle_global_maxima_timeline=[]
 particle_global_average_timeline=[]
 
-gesture_duration=1.0
+gesture_duration=2.0
 posture_duration=0.25
 pause_duration=0.5
 
@@ -70,7 +73,7 @@ particle_of_interest_mode=0
 def func(p) : #Trivial function for testing Particle Swarm Omptomization
     z=0.0
     for n in p:
-        for i in range(1,12) :
+        for i in range(1,servos) :
             z=z+(sin(n*(6.0/i))+(1.0/i))
     return z
 
@@ -87,6 +90,7 @@ def subscriber_cb(msg) : #called whenever RoNeX updates (ie: every frame)
     #print(str(time-debug_timer))
     debug_timer=time
     
+    output_positions=[0.5]*servos
     #------------------------
     
     analogue_inputs = get_servo_positions(msg)
@@ -105,6 +109,12 @@ def subscriber_cb(msg) : #called whenever RoNeX updates (ie: every frame)
                 break
     
     if particle_of_interest_mode==1:
+        t=np.clip(0,1,(time-particle_of_interest_start_time)/gesture_duration)
+        output_positions=particle_positions[particle_of_interest,:servos]
+        for i in range(servos):
+            output_positions[i]=output_positions[i]+(particle_positions[particle_of_interest,servos+i]-output_positions[i])*t
+    
+    if particle_of_interest_mode==1:
         if (time-particle_of_interest_start_time)>(gesture_duration+posture_duration):
             particle_of_interest_mode=2
             configure_servos(False)
@@ -116,10 +126,6 @@ def subscriber_cb(msg) : #called whenever RoNeX updates (ie: every frame)
         particle_of_interest_mode=0
         configure_servos(False)
        
-    
-    if not np.isnan(particle_of_interest):
-        output_positions = particle_positions[particle_of_interest]
-        print('particle_of_interest_mode = '+particle_modes[particle_of_interest_mode])
       
     for index in range(particle_swarm_size): #update velocities
         for i in range(dimension):
@@ -166,7 +172,7 @@ def subscriber_cb(msg) : #called whenever RoNeX updates (ie: every frame)
 
 def get_servo_positions(msg) : #get analogue value from an individual servo
     analogue_inputs = []
-    for index in range(12): #fill an array with the analogue servo inputs
+    for index in range(servos): #fill an array with the analogue servo inputs
         analogue_inputs.append(msg.analogue[index]) # range 0 -- 3690
     return analogue_inputs 
 
@@ -202,7 +208,7 @@ def shutdown(): #put the console back to normal and turn the servos off
 
 
 def centre_servos():
-    pwm=np.empty(12); pwm.fill(0.5) 
+    pwm=np.empty(servos); pwm.fill(0.5) 
     set_servo_angles(pwm)   
     configure_servos(True)
     set_servo_angles(pwm)
