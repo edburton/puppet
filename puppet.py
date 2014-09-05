@@ -49,25 +49,32 @@ particle_swarm_size = dimension
 particle_positions = np.random.rand(particle_swarm_size,dimension)
 for index in range(particle_swarm_size):
     for i in range(dimension):
-        particle_positions[index,i]=np.random.uniform(0.3,0.7)
-particle_values = [np.nan]*particle_swarm_size
+        particle_positions[index,i]=np.random.uniform(0.4,0.6)
+particle_values = [np.NINF]*particle_swarm_size
 particle_velocities = np.zeros_like(particle_positions)
 particle_maxima_positions=np.zeros_like(particle_positions)
 particle_maxima_positions[:]=np.nan
-particle_maxima_values=[-np.inf]*particle_swarm_size
+particle_maxima_values=[np.NINF]*particle_swarm_size
 particle_global_maxima_position=[np.nan]*dimension
-particle_global_maxima_value=-np.inf
+particle_global_maxima_value=np.NINF
 
 particle_global_maxima_timeline=[]
 particle_global_average_timeline=[]
 
-gesture_duration=2.0
-pause_duration=1.0
+gesture_duration=1.0
+relaxation_pause_duration=0.5
+restart_pause_duration=0.25
+posture_portion=0.25
 
 particle_of_interest=np.nan
+next_particle_of_interest=0;
 particle_of_interest_start_time=0.0
-particle_modes=['null','first_gesture','first_pause','second_gesture','second_pause']
+particle_modes=['null','first_gesture','relaxation_pause','restart_pause','second_gesture','end_pause']
 particle_of_interest_mode=0
+
+inputs_at_end_of_gesture=np.nan
+inputs_at_rest=np.nan
+inputs_at_repeat_posture=np.nan
 
 output_positions=[0.5]*servos
 
@@ -82,12 +89,14 @@ frame_counter=0
 debug_timer=0;
 
 def accelerate(t) :
+    t=(t-posture_portion)*(0.5/(0.5-posture_portion))
     t=np.clip(t,0,1)
     return (1-cos(t*np.pi))/2
 
 def subscriber_cb(msg) : #called whenever RoNeX updates (ie: every frame)
     global gesture_duration, posture_duration, pause_duration, output_positions
-    global particle_of_interest, particle_of_interest_start_time,particle_modes,particle_of_interest_mode
+    global inputs_at_end_of_gesture, inputs_at_rest, inputs_at_repeat_posture
+    global particle_of_interest, next_particle_of_interest, particle_of_interest_start_time,particle_modes,particle_of_interest_mode
     global particle_velocities, particle_positions, particle_swarm_size, particle_global_maxima_position, particle_global_maxima_value
     now = rospy.get_rostime()
     time = now.to_sec()
@@ -103,14 +112,11 @@ def subscriber_cb(msg) : #called whenever RoNeX updates (ie: every frame)
     
     
     if np.isnan(particle_of_interest):
-        for index in range(particle_swarm_size):
-            if np.isnan(particle_values[index]):
-                particle_of_interest=index
-                particle_of_interest_start_time=time
-                particle_of_interest_mode=1
-                configure_servos(True)
-                print('particle_of_interest = '+str(particle_of_interest))
-                break
+        particle_of_interest=next_particle_of_interest
+        particle_of_interest_start_time=time
+        particle_of_interest_mode=1
+        configure_servos(True)
+        print('particle_of_interest = '+str(particle_of_interest))
     
     if particle_of_interest_mode==1:
         t=accelerate((time-particle_of_interest_start_time)/gesture_duration)
@@ -119,65 +125,96 @@ def subscriber_cb(msg) : #called whenever RoNeX updates (ie: every frame)
     
     if particle_of_interest_mode==1:
         if (time-particle_of_interest_start_time)>gesture_duration:
+            inputs_at_end_of_gesture=get_smoothed_servo_positions()
             configure_servos(False)
             particle_of_interest_mode=2
             
     if particle_of_interest_mode==2:
-        if (time-particle_of_interest_start_time)>gesture_duration+pause_duration:
-            particle_of_interest_mode=3           
+        if (time-particle_of_interest_start_time)>gesture_duration+relaxation_pause_duration:
+            particle_of_interest_mode=3  
+            inputs_at_rest=get_smoothed_servo_positions()   
+            
+    if particle_of_interest_mode==3:
+        if (time-particle_of_interest_start_time)>gesture_duration+relaxation_pause_duration+restart_pause_duration:
+            particle_of_interest_mode=4  
             configure_servos(True)
                 
-    if particle_of_interest_mode==3:
-        t=accelerate((time-(particle_of_interest_start_time+gesture_duration+pause_duration))/gesture_duration)
+    if particle_of_interest_mode==4 or particle_of_interest_mode==5:
+        t=accelerate((time-(particle_of_interest_start_time+gesture_duration+relaxation_pause_duration+restart_pause_duration))/gesture_duration)
         for i in range(servos):
             output_positions[i]=(particle_positions[particle_of_interest,i]*(1-t))+(particle_positions[particle_of_interest,servos+i]*t)
     
-    if particle_of_interest_mode==3:
-        if (time-particle_of_interest_start_time)>((gesture_duration*2)+pause_duration):
-            configure_servos(False)
-            particle_of_interest_mode=4  
+    if (particle_of_interest_mode==4 and (time-particle_of_interest_start_time)>gesture_duration+relaxation_pause_duration+restart_pause_duration+(gesture_duration*posture_portion)):
+        inputs_at_repeat_posture=get_smoothed_servo_positions()
+        particle_of_interest_mode=5   
+    else:
+        pub_output.publish(0)
     
-    if particle_of_interest_mode==4:
-        if (time-particle_of_interest_start_time)>((gesture_duration*2)+(pause_duration*2)):
-            particle_values[particle_of_interest]=1
+    if particle_of_interest_mode==5:
+        if (time-particle_of_interest_start_time)>((gesture_duration*2)+relaxation_pause_duration+restart_pause_duration):
+            configure_servos(False)
+            particle_of_interest_mode=6  
+    
+    new_fitness_for_particle=np.nan
+    
+    if particle_of_interest_mode==6:
+        if (time-particle_of_interest_start_time)>((gesture_duration*2)+((relaxation_pause_duration+restart_pause_duration)*2)):
+            d1=np.linalg.norm(inputs_at_end_of_gesture-inputs_at_rest)
+            d2=np.linalg.norm(inputs_at_repeat_posture-inputs_at_rest)
+            fitness=d1-d2
+            print ("finishing="+str(d1)+", repeating="+str(d2)+", fitness="+str(fitness))
+            pub_output.publish(fitness)
+            particle_values[particle_of_interest]=fitness
+            new_fitness_for_particle=particle_of_interest
+            next_particle_of_interest=(particle_of_interest+1)%particle_swarm_size
             particle_of_interest=np.nan
             particle_of_interest_start_time=np.nan
             particle_of_interest_mode=0
+            inputs_at_end_of_gesture=np.nan
+            inputs_at_rest=np.nan
+            inputs_at_repeat_posture=np.nan
+
        
       
     for index in range(particle_swarm_size): #update velocities
-        for i in range(dimension):
-            r1 = np.random.uniform()
-            r2 = np.random.uniform()
-            social=0.0
-            cognitive=0.0
-            if not np.isnan(particle_global_maxima_position[i]) :
-                social = c1 * r1 * (particle_global_maxima_position[i] - particle_positions[index,i])
-            if not np.isnan(particle_maxima_positions[index,i]) :
-                cognitive = c2 * r2 * (particle_maxima_positions[index,i] - particle_positions[index,i])  
-            particle_velocities[index,i] = (w * particle_velocities[index,i]) + social + cognitive          
+        if index==new_fitness_for_particle:
+            for i in range(dimension):
+                r1 = np.random.uniform()
+                r2 = np.random.uniform()
+                social=0.0
+                cognitive=0.0
+                if not np.isnan(particle_global_maxima_position[i]) :
+                    social = c1 * r1 * (particle_global_maxima_position[i] - particle_positions[index,i])
+                if not np.isnan(particle_maxima_positions[index,i]) :
+                    cognitive = c2 * r2 * (particle_maxima_positions[index,i] - particle_positions[index,i])  
+                particle_velocities[index,i] = (w * particle_velocities[index,i]) + social + cognitive          
     
     average=0.0
+    average_n=0
     
     for index in range(particle_swarm_size): #update cognitive and social maxima
         
         #particle_values[index]=func(particle_positions[index,:])
-        average=average+particle_values[index]
-        if particle_values[index] > particle_global_maxima_value:
-            particle_global_maxima_value=particle_values[index]
-            for i in range(dimension): 
-                particle_global_maxima_position[i]=particle_positions[index,i]
-        if particle_values[index] > particle_maxima_values[index]:
-            particle_maxima_values[index]=particle_values[index]
-            for i in range(dimension):                    
-                particle_maxima_positions[index,i]=particle_positions[index,i]
+        if not np.isneginf(particle_values[index]) :
+            average_n=average_n+1
+            average=average+particle_values[index]
+            if particle_values[index] > particle_global_maxima_value:
+                particle_global_maxima_value=particle_values[index]
+                for i in range(dimension): 
+                    particle_global_maxima_position[i]=particle_positions[index,i]
+            if particle_values[index] > particle_maxima_values[index]:
+                particle_maxima_values[index]=particle_values[index]
+                for i in range(dimension):                    
+                    particle_maxima_positions[index,i]=particle_positions[index,i]
         
-    average= average/particle_swarm_size
-    particle_global_average_timeline.append(average+np.random.uniform(0.2,0.4))
-    particle_global_maxima_timeline.append(particle_global_maxima_value+np.random.uniform(0.4,0.6))
+    if (average_n>0):
+        average= average/average_n
+        particle_global_average_timeline.append(average)
+        particle_global_maxima_timeline.append(particle_global_maxima_value)
     
-    #particle_positions=np.add(particle_positions,particle_velocities)   #add velocities to positions
-    
+    if not np.isnan(new_fitness_for_particle):
+        particle_positions[new_fitness_for_particle]=np.add(particle_positions[new_fitness_for_particle],particle_velocities[new_fitness_for_particle])   #add velocities to positions
+        particle_values[new_fitness_for_particle]=np.NINF
     #INSERT INTERESTING BIT HERE    
     
     #------------------------
@@ -194,6 +231,17 @@ def get_servo_positions(msg) : #get analogue value from an individual servo
         analogue_inputs.append(msg.analogue[index]) # range 0 -- 3690
     return analogue_inputs 
 
+
+def get_smoothed_servo_positions() :
+    analogue_inputs = np.array([0.0]*servos)
+    q=len(analogue_input_queue)
+    for index in range(servos):
+        for n in range(q):
+            analogue_inputs[index]=analogue_inputs[index]+analogue_input_queue[n][index]
+        if q>0:
+            analogue_inputs[index]=analogue_inputs[index]/q
+    print(str(q)+" -> "+ str(analogue_inputs))
+    return analogue_inputs 
 
 def angle_zero_to_one_to_pwm(angle_zero_to_one) :
     return  1600+ angle_zero_to_one  * 4800
@@ -262,20 +310,22 @@ def init():
 # animation function.  This is called sequentially
 def animate(i):
     global particle_global_average_timeline
-    p=list(particle_global_average_timeline)
+    p=np.array(particle_global_average_timeline)
     n = len(p)
-    x = np.arange(0,n)
-    ax1.set_xlim(0,n)
-    ax1.set_ylim(min(p),max(p))
-    average_graph.set_data(x, p)
+    if n>0:
+        x = np.arange(0,n)
+        ax1.set_xlim(0,n)
+        ax1.set_ylim(min(p),max(p))
+        average_graph.set_data(x, p)
     
     global particle_global_maxima_timeline
-    p=list(particle_global_maxima_timeline)
+    p=np.array(particle_global_maxima_timeline)
     n = len(p)
-    x = np.arange(0,n)
-    ax2.set_xlim(0,n)
-    ax2.set_ylim(min(p),max(p))
-    max_graph.set_data(x, p)
+    if n>0:
+        x = np.arange(0,n)
+        ax2.set_xlim(0,n)
+        ax2.set_ylim(min(p),max(p))
+        max_graph.set_data(x, p)
     
     return ax1, ax2,
 
@@ -289,8 +339,8 @@ if __name__ == "__main__": #setup
     rospy.on_shutdown(shutdown)
     rospy.Subscriber(ronex_path+"state", GeneralIOState, subscriber_cb)
     
-    #anim = animation.FuncAnimation(fig, animate, init_func=init, interval=250, blit=False)
-    #plt.show() 
+    anim = animation.FuncAnimation(fig, animate, init_func=init, interval=250, blit=False)
+    plt.show() 
     rospy.spin()
     
 
