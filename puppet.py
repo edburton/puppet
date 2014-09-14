@@ -45,12 +45,13 @@ c2 = 1.496180 # Scaling co-efficient on the cognitive component
 servos = 12
 
 dimension = servos*2 # Size of the problem
-particle_swarm_size = dimension
+particle_swarm_size = 6
 particle_positions = np.random.rand(particle_swarm_size,dimension)
 for index in range(particle_swarm_size):
     for i in range(dimension):
         particle_positions[index,i]=np.random.uniform(0.4,0.6)
 particle_values = [np.NINF]*particle_swarm_size
+particle_values_for_average = [0.0]*particle_swarm_size
 particle_velocities = np.zeros_like(particle_positions)
 particle_maxima_positions=np.zeros_like(particle_positions)
 particle_maxima_positions[:]=np.nan
@@ -94,7 +95,7 @@ def accelerate(t) :
     return (1-cos(t*np.pi))/2
 
 def subscriber_cb(msg) : #called whenever RoNeX updates (ie: every frame)
-    global gesture_duration, posture_duration, pause_duration, output_positions
+    global gesture_duration, posture_duration, pause_duration, output_positions, particle_values_for_average
     global inputs_at_end_of_gesture, inputs_at_rest, inputs_at_repeat_posture
     global particle_of_interest, next_particle_of_interest, particle_of_interest_start_time,particle_modes,particle_of_interest_mode
     global particle_velocities, particle_positions, particle_swarm_size, particle_global_maxima_position, particle_global_maxima_value
@@ -147,9 +148,7 @@ def subscriber_cb(msg) : #called whenever RoNeX updates (ie: every frame)
     if (particle_of_interest_mode==4 and (time-particle_of_interest_start_time)>gesture_duration+relaxation_pause_duration+restart_pause_duration+(gesture_duration*posture_portion)):
         inputs_at_repeat_posture=get_smoothed_servo_positions()
         particle_of_interest_mode=5   
-    else:
-        pub_output.publish(0)
-    
+        
     if particle_of_interest_mode==5:
         if (time-particle_of_interest_start_time)>((gesture_duration*2)+relaxation_pause_duration+restart_pause_duration):
             configure_servos(False)
@@ -162,9 +161,11 @@ def subscriber_cb(msg) : #called whenever RoNeX updates (ie: every frame)
             d1=np.linalg.norm(inputs_at_end_of_gesture-inputs_at_rest)
             d2=np.linalg.norm(inputs_at_repeat_posture-inputs_at_rest)
             fitness=d1-d2
+            if fitness<0:
+                fitness=-sqrt(fitness/-1000)  #crush exceptionally negative fitnesses caused by brown-out
             print ("finishing="+str(d1)+", repeating="+str(d2)+", fitness="+str(fitness))
-            pub_output.publish(fitness)
             particle_values[particle_of_interest]=fitness
+            particle_values_for_average[particle_of_interest]=fitness
             new_fitness_for_particle=particle_of_interest
             next_particle_of_interest=(particle_of_interest+1)%particle_swarm_size
             particle_of_interest=np.nan
@@ -190,29 +191,25 @@ def subscriber_cb(msg) : #called whenever RoNeX updates (ie: every frame)
                 particle_velocities[index,i] = (w * particle_velocities[index,i]) + social + cognitive          
     
     average=0.0
-    average_n=0
     
     for index in range(particle_swarm_size): #update cognitive and social maxima
-        
+        average=average+particle_values_for_average[index]
         #particle_values[index]=func(particle_positions[index,:])
         if not np.isneginf(particle_values[index]) :
-            average_n=average_n+1
             average=average+particle_values[index]
             if particle_values[index] > particle_global_maxima_value:
                 particle_global_maxima_value=particle_values[index]
-                for i in range(dimension): 
-                    particle_global_maxima_position[i]=particle_positions[index,i]
+                particle_global_maxima_position=np.copy(particle_positions[index])
             if particle_values[index] > particle_maxima_values[index]:
                 particle_maxima_values[index]=particle_values[index]
-                for i in range(dimension):                    
-                    particle_maxima_positions[index,i]=particle_positions[index,i]
-        
-    if (average_n>0):
-        average= average/average_n
-        particle_global_average_timeline.append(average)
-        particle_global_maxima_timeline.append(particle_global_maxima_value)
+                particle_maxima_positions[index]=np.copy(particle_positions[index])
+    
+    average= average/particle_swarm_size
+
     
     if not np.isnan(new_fitness_for_particle):
+        particle_global_average_timeline.append(average)
+        particle_global_maxima_timeline.append(particle_global_maxima_value)
         particle_positions[new_fitness_for_particle]=np.add(particle_positions[new_fitness_for_particle],particle_velocities[new_fitness_for_particle])   #add velocities to positions
         particle_values[new_fitness_for_particle]=np.NINF
     #INSERT INTERESTING BIT HERE    
@@ -226,22 +223,21 @@ def subscriber_cb(msg) : #called whenever RoNeX updates (ie: every frame)
 
 
 def get_servo_positions(msg) : #get analogue value from an individual servo
-    analogue_inputs = []
+    analogue_inputs_ = []
     for index in range(servos): #fill an array with the analogue servo inputs
-        analogue_inputs.append(msg.analogue[index]) # range 0 -- 3690
-    return analogue_inputs 
+        analogue_inputs_.append(msg.analogue[index]) # range 0 -- 3690
+    return analogue_inputs_ 
 
 
 def get_smoothed_servo_positions() :
-    analogue_inputs = np.array([0.0]*servos)
+    analogue_inputs_ = np.array([0.0]*servos)
     q=len(analogue_input_queue)
     for index in range(servos):
         for n in range(q):
-            analogue_inputs[index]=analogue_inputs[index]+analogue_input_queue[n][index]
+            analogue_inputs_[index]=analogue_inputs_[index]+analogue_input_queue[n][index]
         if q>0:
-            analogue_inputs[index]=analogue_inputs[index]/q
-    print(str(q)+" -> "+ str(analogue_inputs))
-    return analogue_inputs 
+            analogue_inputs_[index]=analogue_inputs_[index]/q
+    return analogue_inputs_
 
 def angle_zero_to_one_to_pwm(angle_zero_to_one) :
     return  1600+ angle_zero_to_one  * 4800
