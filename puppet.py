@@ -5,6 +5,7 @@ import rospy
 import pickle
 import dynamic_reconfigure.client
 import copy
+import time
 from sr_ronex_msgs.msg import PWM, GeneralIOState
 from std_msgs.msg import Bool
 from std_msgs.msg import Float32
@@ -45,7 +46,7 @@ c2 = 1.496180 # Scaling co-efficient on the cognitive component
 servos = 12
 
 dimension = servos*2 # Size of the problem
-particle_swarm_size = 6
+particle_swarm_size = 8
 particle_positions = np.random.rand(particle_swarm_size,dimension)
 for index in range(particle_swarm_size):
     for i in range(dimension):
@@ -79,6 +80,10 @@ inputs_at_repeat_posture=np.nan
 
 output_positions=[0.5]*servos
 
+startup_pause_in_seconds=6
+complete_iterations=0
+max_complete_iterations=particle_swarm_size*particle_swarm_size; #set to 0 for limitless iterations
+
 def func(p) : #Trivial function for testing Particle Swarm Omptomization
     z=0.0
     for n in p:
@@ -101,7 +106,7 @@ def subscriber_cb(msg) : #called whenever RoNeX updates (ie: every frame)
     global particle_velocities, particle_positions, particle_swarm_size, particle_global_maxima_position, particle_global_maxima_value
     now = rospy.get_rostime()
     time = now.to_sec()
-    global debug_timer
+    global debug_timer, complete_iterations,max_complete_iterations
     #print(str(time-debug_timer))
     debug_timer=time
     
@@ -113,11 +118,13 @@ def subscriber_cb(msg) : #called whenever RoNeX updates (ie: every frame)
     
     
     if np.isnan(particle_of_interest):
-        particle_of_interest=next_particle_of_interest
-        particle_of_interest_start_time=time
-        particle_of_interest_mode=1
-        configure_servos(True)
-        print('particle_of_interest = '+str(particle_of_interest))
+        complete_iterations=complete_iterations+1
+        if max_complete_iterations==0 or complete_iterations<=max_complete_iterations:
+            particle_of_interest=next_particle_of_interest
+            particle_of_interest_start_time=time
+            particle_of_interest_mode=1
+            configure_servos(True)
+            print('particle_of_interest = '+str(particle_of_interest))
     
     if particle_of_interest_mode==1:
         t=accelerate((time-particle_of_interest_start_time)/gesture_duration)
@@ -328,6 +335,7 @@ def animate(i):
 
 
 if __name__ == "__main__": #setup
+    time.sleep(startup_pause_in_seconds)
     #setup_visualisation()
     rospy.init_node("change_ronex_configuration_py")
     centre_servos()
